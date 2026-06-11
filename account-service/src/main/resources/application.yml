@@ -1,0 +1,117 @@
+server:
+  port: 8082
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: account-service
+
+  # ── PostgreSQL ────────────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cbs_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:root}
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      pool-name: AccountServicePool
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  # ── Redis cache ───────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms          # fail fast — never block a balance read for >2s
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 1
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000     # 5 minutes — balance cache TTL
+
+  # ── Kafka ─────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    consumer:
+      group-id: account-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.cbs.*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 1
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI:http://localhost:8080/auth}
+
+# ── Kafka topics ──────────────────────────────────────────────
+kafka:
+  topics:
+    # consumed
+    customer-registered:  customer.registered
+    kyc-status-changed:   customer.kyc.status.changed
+    # published
+    account-opened:       account.opened
+    account-closed:       account.closed
+    account-frozen:       account.frozen
+
+# ── Account business rules ────────────────────────────────────
+account:
+  rules:
+    savings:
+      minimum-balance: 1000.00       # ₹1,000 MAB
+      daily-withdrawal-limit: 100000 # ₹1,00,000
+    current:
+      minimum-balance: 5000.00       # ₹5,000 MAB
+      daily-withdrawal-limit: 500000 # ₹5,00,000
+    fd:
+      min-deposit: 10000.00          # ₹10,000 minimum FD
+      min-tenure-days: 7
+      max-tenure-days: 3650          # 10 years
+    rd:
+      min-monthly-instalment: 500.00 # ₹500/month minimum
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.cbs.account: INFO
+    org.springframework.security: WARN

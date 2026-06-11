@@ -1,0 +1,99 @@
+version: '3.9'
+
+# CBS Account Service — local dev stack
+# Reuses the same postgres/kafka/redis from customer-service compose
+# or run this independently for account-service-only development.
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cbs-postgres
+    environment:
+      POSTGRES_DB:       cbs_db
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cbs_user -d cbs_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cbs-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: cbs-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME:   2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: cbs-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID:                        1
+      KAFKA_ZOOKEEPER_CONNECT:                zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:   PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS:             PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  account-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbs-account-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    environment:
+      DB_HOST:        postgres
+      DB_PORT:        5432
+      DB_NAME:        cbs_db
+      DB_USER:        postgres
+      DB_PASSWORD:    root
+      REDIS_HOST:     redis
+      REDIS_PORT:     6379
+      KAFKA_BROKERS:  kafka:9092
+      JWT_ISSUER_URI: http://localhost:8080/auth
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+volumes:
+  postgres_data:
