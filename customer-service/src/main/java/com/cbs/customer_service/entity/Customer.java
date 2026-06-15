@@ -1,209 +1,158 @@
 package com.cbs.customer_service.entity;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
-import com.cbs.customer_service.enums.CustomerType;
-import com.cbs.customer_service.enums.Gender;
 import com.cbs.customer_service.enums.KycStatus;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Index;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import lombok.ToString;
 
-/**
- * JPA entity for the `customers` table.
- *
- * Design notes:
- * - ddl-auto=validate → Flyway owns the schema; Hibernate only reads it.
- * - Enums stored as strings (EnumType.STRING) to survive DB enum renaming.
- * - No @Version (optimistic lock) here — customer profile updates are rare
- *   and go through the service layer which handles concurrency via SELECT FOR UPDATE.
- * - Aadhaar: store only the last 4 digits or encrypted ciphertext.
- *   The field is intentionally named `aadhaarMasked` to make this obvious.
- */
 @Entity
-@Table(
-    name = "customers",
-    indexes = {
-        @Index(name = "idx_customers_pan",       columnList = "pan_number"),
-        @Index(name = "idx_customers_kyc_status", columnList = "kyc_status")
-    }
-)
+@Table(name = "customers", schema = "public")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@ToString(exclude = {"addresses"})
 public class Customer {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "customer_id", updatable = false, nullable = false)
-    private UUID customerId;
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "customer_type", nullable = false, length = 20)
-    private CustomerType customerType;
+    @Column(name = "customer_number", unique = true, nullable = false, length = 20)
+    private String customerNumber;
 
-    // ── Individual fields ────────────────────────────────────────
-    @Column(name = "first_name", length = 80)
+    @Column(name = "first_name", nullable = false, length = 100)
     private String firstName;
 
-    @Column(name = "last_name", length = 80)
+    @Column(name = "last_name", nullable = false, length = 100)
     private String lastName;
 
-    @Column(name = "date_of_birth")
-    private LocalDate dateOfBirth;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "gender", length = 20)
-    private Gender gender;
-
-    // ── Business fields ──────────────────────────────────────────
-    @Column(name = "business_name", length = 200)
-    private String businessName;
-
-    @Column(name = "business_type", length = 60)
-    private String businessType;
-
-    // ── Identity / KYC ──────────────────────────────────────────
-    @Column(name = "pan_number", length = 10, unique = true)
-    private String panNumber;
-
-    /**
-     * Stores only the last 4 digits of Aadhaar, or an application-layer
-     * ciphertext. Never persist the full 12-digit number in plaintext.
-     */
-    @Column(name = "aadhaar_number", length = 12)
-    private String aadhaarMasked;
-
-    // ── Contact ──────────────────────────────────────────────────
-    @Column(name = "phone", nullable = false, length = 15, unique = true)
-    private String phone;
-
-    @Column(name = "email", length = 254, unique = true)
+    @Column(name = "email", unique = true, nullable = false, length = 255)
     private String email;
 
-    @Column(name = "alternate_phone", length = 15)
-    private String alternatePhone;
+    @Column(name = "phone_number", unique = true, nullable = false, length = 20)
+    private String phoneNumber;
 
-    // ── Address ──────────────────────────────────────────────────
-    @Column(name = "address_line1", length = 200)
-    private String addressLine1;
+    @Column(name = "date_of_birth", nullable = false)
+    private LocalDate dateOfBirth;
 
-    @Column(name = "address_line2", length = 200)
-    private String addressLine2;
+    @Column(name = "national_id", unique = true, length = 50)
+    private String nationalId;
 
-    @Column(name = "city", length = 80)
-    private String city;
+    @Column(name = "nationality", length = 100)
+    private String nationality;
 
-    @Column(name = "state", length = 80)
-    private String state;
-
-    @Column(name = "pincode", length = 6)
-    private String pincode;
-
-    @Column(name = "country", length = 2, nullable = false)
-    @Builder.Default
-    private String country = "IN";
-
-    // ── KYC ──────────────────────────────────────────────────────
     @Enumerated(EnumType.STRING)
     @Column(name = "kyc_status", nullable = false, length = 20)
-    @Builder.Default
-    private KycStatus kycStatus = KycStatus.PENDING;
+    private KycStatus kycStatus;
 
     @Column(name = "kyc_verified_at")
-    private OffsetDateTime kycVerifiedAt;
+    private LocalDateTime kycVerifiedAt;
 
-    @Column(name = "kyc_expires_at")
-    private OffsetDateTime kycExpiresAt;
+    @Column(name = "kyc_rejection_reason", length = 500)
+    private String kycRejectionReason;
 
-    // ── Risk & Compliance ────────────────────────────────────────
-    @Column(name = "risk_category", nullable = false, length = 20)
-    @Builder.Default
-    private String riskCategory = "LOW";
+    @Column(name = "is_active", nullable = false)
+    private boolean active;
 
-    @Column(name = "is_pep", nullable = false)
-    @Builder.Default
-    private Boolean isPep = false;
+    @Column(name = "risk_category", length = 20)
+    private String riskCategory;
 
-    @Column(name = "is_deceased", nullable = false)
-    @Builder.Default
-    private Boolean isDeceased = false;
-
-    // ── Branch ───────────────────────────────────────────────────
-    @Column(name = "home_branch_id")
-    private UUID homeBranchId;
-
-    @Column(name = "created_by")
-    private UUID createdBy;
-
-    // ── Audit ────────────────────────────────────────────────────
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false, nullable = false)
-    private OffsetDateTime createdAt;
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
 
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
-    private OffsetDateTime updatedAt;
+    private LocalDateTime updatedAt;
 
-    // ── Domain helpers ───────────────────────────────────────────
+    @Version
+    @Column(name = "version")
+    private Long version;
 
-    /** Full name for INDIVIDUAL customers; business name for BUSINESS. */
-    @Transient
-    public String getDisplayName() {
-        if (customerType == CustomerType.BUSINESS) {
-            return businessName;
-        }
-        return (firstName != null ? firstName : "") + " "
-             + (lastName  != null ? lastName  : "");
-    }
+    @OneToMany(mappedBy = "customer", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private Set<CustomerAddress> addresses;
 
-    /** Advance KYC to UNDER_REVIEW when docs are submitted. */
-    public void submitForKycReview() {
-        if (this.kycStatus != KycStatus.PENDING && this.kycStatus != KycStatus.EXPIRED) {
+    // -----------------------------------------------------------------------
+    // KYC State Machine
+    // Maps current status -> set of allowed next statuses
+    // -----------------------------------------------------------------------
+    private static final Map<KycStatus, Set<KycStatus>> KYC_TRANSITIONS = Map.of(
+            KycStatus.PENDING,     Set.of(KycStatus.UNDER_REVIEW, KycStatus.REJECTED),
+            KycStatus.UNDER_REVIEW, Set.of(KycStatus.APPROVED, KycStatus.REJECTED, KycStatus.ADDITIONAL_INFO_REQUIRED),
+            KycStatus.ADDITIONAL_INFO_REQUIRED, Set.of(KycStatus.UNDER_REVIEW, KycStatus.REJECTED),
+            KycStatus.APPROVED,    Set.of(KycStatus.SUSPENDED),
+            KycStatus.SUSPENDED,   Set.of(KycStatus.APPROVED, KycStatus.REJECTED),
+            KycStatus.REJECTED,    Set.of()
+    );
+
+    /**
+     * Transition KYC status following the defined state machine.
+     *
+     * @throws IllegalStateException if the transition is not permitted
+     */
+    public void transitionKyc(KycStatus newStatus, String rejectionReason) {
+        Set<KycStatus> allowed = KYC_TRANSITIONS.getOrDefault(this.kycStatus, Set.of());
+        if (!allowed.contains(newStatus)) {
             throw new IllegalStateException(
-                "KYC can only be submitted from PENDING or EXPIRED state, current: " + kycStatus);
+                    "KYC transition from [" + this.kycStatus + "] to [" + newStatus + "] is not permitted."
+            );
         }
-        this.kycStatus = KycStatus.UNDER_REVIEW;
-    }
-
-    /** Called by the KYC officer / automated verifier to approve. */
-    public void approveKyc(OffsetDateTime expiresAt) {
-        if (this.kycStatus != KycStatus.UNDER_REVIEW) {
-            throw new IllegalStateException(
-                "KYC can only be approved from UNDER_REVIEW state, current: " + kycStatus);
+        this.kycStatus = newStatus;
+        if (newStatus == KycStatus.APPROVED) {
+            this.kycVerifiedAt = LocalDateTime.now();
+            this.kycRejectionReason = null;
         }
-        this.kycStatus     = KycStatus.VERIFIED;
-        this.kycVerifiedAt = OffsetDateTime.now();
-        this.kycExpiresAt  = expiresAt;
+        if (newStatus == KycStatus.REJECTED || newStatus == KycStatus.ADDITIONAL_INFO_REQUIRED) {
+            this.kycRejectionReason = rejectionReason;
+        }
     }
 
-    /** Called when KYC verification fails. */
-    public void rejectKyc() {
-        this.kycStatus = KycStatus.REJECTED;
+    /**
+     * Check if this customer is fully KYC-verified and active.
+     */
+    public boolean isFullyVerified() {
+        return this.active && this.kycStatus == KycStatus.APPROVED;
     }
 
-    /** Called by the nightly KYC expiry job. */
-    public void expireKyc() {
-        this.kycStatus = KycStatus.EXPIRED;
+    /**
+     * Deactivate customer (soft delete).
+     */
+    public void deactivate() {
+        this.active = false;
+    }
+
+    /**
+     * Get customer's full name.
+     */
+    public String getFullName() {
+        return this.firstName + " " + this.lastName;
     }
 }

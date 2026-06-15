@@ -1,32 +1,32 @@
 server:
   port: 8081
   servlet:
-    context-path: /
+    context-path: /api
 
 spring:
   application:
     name: customer-service
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cbs_db}
-    username: ${DB_USER:postgres}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cbs_customer}
+    username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:root}
+    driver-class-name: org.postgresql.Driver
     hikari:
-      minimum-idle: 5
-      maximum-pool-size: 20
+      maximum-pool-size: 10
+      minimum-idle: 2
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-      pool-name: CustomerServicePool
 
   jpa:
     hibernate:
-      ddl-auto: update          # Flyway owns the schema — Hibernate only validates
+      ddl-auto: update
     show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        default_schema: public
+        format_sql: true
         jdbc:
           time_zone: UTC
 
@@ -34,27 +34,55 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+    validate-on-migrate: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
 
   kafka:
-    bootstrap-servers: ${KAFKA_BROKERS:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-      acks: all                   # wait for all replicas — critical for financial events
+      acks: all
       retries: 3
       properties:
-        enable.idempotence: true  # exactly-once producer semantics
+        enable.idempotence: true
         max.in.flight.requests.per.connection: 1
+        delivery.timeout.ms: 120000
+    consumer:
+      group-id: customer-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.cbs.*"
 
-# Kafka topic names
+  cache:
+    type: redis
+    redis:
+      time-to-live: 3600000   # 1 hour default
+
+# JWT Resource Server — validates tokens issued by Auth Service
+jwt:
+  secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+  expiration: 86400000   # 24 hours
+
+# Kafka Topics
 kafka:
   topics:
     customer-registered: customer.registered
-    kyc-status-changed:  customer.kyc.status.changed
-    customer-updated:    customer.profile.updated
-
-# Spring Security — permit actuator + trust gateway-forwarded JWT
-spring.security.oauth2.resourceserver.jwt.issuer-uri: ${JWT_ISSUER_URI:http://localhost:8080/auth}
+    customer-kyc-updated: customer.kyc.updated
+    customer-profile-updated: customer.profile.updated
 
 management:
   endpoints:
@@ -67,6 +95,8 @@ management:
 
 logging:
   level:
-    com.cbs.customer: INFO
-    org.springframework.security: WARN
-    org.hibernate.SQL: WARN
+    com.cbs.customerservice: DEBUG
+    org.springframework.security: INFO
+    org.springframework.kafka: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql: TRACE

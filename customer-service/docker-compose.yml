@@ -1,105 +1,122 @@
 version: '3.9'
 
-# ── CBS Local Development Stack ───────────────────────────────────────────────
-# Starts: PostgreSQL, Redis, Kafka (+ Zookeeper), Customer Service
-#
-# Usage:
-#   docker compose up -d          # start everything
-#   docker compose logs -f customer-service  # tail logs
-#   docker compose down -v        # stop + remove volumes
-
 services:
 
-  # ── PostgreSQL ─────────────────────────────────────────────────
+  # -----------------------------------------------------------------------
+  # Customer Service
+  # -----------------------------------------------------------------------
+  customer-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cbs-customer-service
+    ports:
+      - "8081:8081"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cbs_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: root
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - cbs-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081/api/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # -----------------------------------------------------------------------
+  # PostgreSQL 16
+  # -----------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
-    container_name: cbs-postgres
-    environment:
-      POSTGRES_DB:       cbs_db
-      POSTGRES_USER:     postgres
-      POSTGRES_PASSWORD: root
+    container_name: cbs-cs-postgres
     ports:
       - "5432:5432"
+    environment:
+      POSTGRES_DB: cbs_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cbs-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cbs_user -d cbs_db"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ── Zookeeper (required by Kafka) ──────────────────────────────
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.0
-    container_name: cbs-zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME:   2000
-    ports:
-      - "2181:2181"
-
-  # ── Kafka ──────────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.6.0
-    container_name: cbs-kafka
-    depends_on:
-      - zookeeper
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID:                        1
-      KAFKA_ZOOKEEPER_CONNECT:                zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:   PLAINTEXT:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS:             PLAINTEXT://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-
-  # ── Redis ──────────────────────────────────────────────────────
+  # -----------------------------------------------------------------------
+  # Redis 7
+  # -----------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    container_name: cbs-redis
+    container_name: cbs-cs-redis
     ports:
       - "6379:6379"
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - cbs-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
-  # ── Customer Service ───────────────────────────────────────────
-  customer-service:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: cbs-customer-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
+  # -----------------------------------------------------------------------
+  # Zookeeper (required by Kafka)
+  # -----------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: cbs-cs-zookeeper
     environment:
-      DB_HOST:       postgres
-      DB_PORT:       5432
-      DB_NAME:       cbs_db
-      DB_USER:       cbs_user
-      DB_PASSWORD:   cbs_pass
-      KAFKA_BROKERS: kafka:9092
-      # In production, replace with your actual issuer URI
-      JWT_ISSUER_URI: http://localhost:8080/auth
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      start_period: 90s
-      retries: 3
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - cbs-network
+
+  # -----------------------------------------------------------------------
+  # Kafka (Confluent 7.6)
+  # -----------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: cbs-cs-kafka
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - cbs-network
 
 volumes:
   postgres_data:
+  redis_data:
+
+networks:
+  cbs-network:
+    driver: bridge

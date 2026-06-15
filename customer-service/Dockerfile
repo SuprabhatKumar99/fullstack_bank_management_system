@@ -1,48 +1,44 @@
-# ── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM eclipse-temurin:21-jdk-alpine AS builder
+# -----------------------------------------------------------------------
+# Stage 1 — Build
+# -----------------------------------------------------------------------
+FROM maven:3.9.6-eclipse-temurin-21 AS builder
+
 WORKDIR /build
 
-# Cache Maven dependencies first (only re-downloads when pom.xml changes)
+# Cache dependencies layer separately
 COPY pom.xml .
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn dependency:go-offline -q
+RUN mvn dependency:go-offline -B
 
-# Build the application
 COPY src ./src
-RUN --mount=type=cache,target=/root/.m2 \
-    mvn package -DskipTests -q
+RUN mvn clean package -DskipTests -B
 
-# Extract layers for optimised Docker caching
-RUN java -Djarmode=layertools \
-    -jar target/customer-service-*.jar extract --destination /build/layers
+# -----------------------------------------------------------------------
+# Stage 2 — Runtime
+# -----------------------------------------------------------------------
+FROM eclipse-temurin:21-jre-alpine
 
-# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
-FROM eclipse-temurin:21-jre-alpine AS runtime
+LABEL maintainer="CBS Team"
+LABEL service="customer-service"
+LABEL version="1.0.0"
 
-# Security: run as non-root user
+# Non-root user for security
 RUN addgroup -S cbs && adduser -S cbs -G cbs
-USER cbs
 
 WORKDIR /app
 
-# Copy layers in dependency order (least → most likely to change)
-COPY --from=builder /build/layers/dependencies          ./
-COPY --from=builder /build/layers/spring-boot-loader    ./
-COPY --from=builder /build/layers/snapshot-dependencies ./
-COPY --from=builder /build/layers/application           ./
+COPY --from=builder /build/target/customer-service-*.jar app.jar
 
-# Expose service port
+RUN chown cbs:cbs app.jar
+
+USER cbs
+
 EXPOSE 8081
 
-# Health check for Docker Compose / ECS
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD wget -qO- http://localhost:8081/actuator/health || exit 1
-
-# JVM flags tuned for containers
+# JVM tuning for container environments
 ENV JAVA_OPTS="-XX:+UseContainerSupport \
                -XX:MaxRAMPercentage=75.0 \
+               -XX:+UseG1GC \
                -XX:+ExitOnOutOfMemoryError \
                -Djava.security.egd=file:/dev/./urandom"
 
-ENTRYPOINT ["sh", "-c", \
-    "java $JAVA_OPTS org.springframework.boot.loader.launch.JarLauncher"]
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

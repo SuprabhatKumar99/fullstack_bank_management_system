@@ -1,79 +1,117 @@
 package com.cbs.customer_service.exception;
 
-import com.cbs.customer_service.dto.response.ApiResponse;
-import lombok.extern.slf4j.Slf4j;
+import java.net.URI;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
+
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.Map;
-import java.util.stream.Collectors;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
+
 
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
 
-    // ── Domain exceptions ─────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Domain exceptions
+    // -----------------------------------------------------------------------
 
     @ExceptionHandler(CustomerNotFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNotFound(CustomerNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.fail("CUSTOMER_NOT_FOUND", ex.getMessage()));
+    public ResponseEntity<ErrorResponse> handleCustomerNotFound(
+            CustomerNotFoundException ex, HttpServletRequest request) {
+        log.warn("CustomerNotFoundException: {}", ex.getMessage());
+        return buildError(HttpStatus.NOT_FOUND, ex.getMessage(), request.getRequestURI());
     }
 
-    @ExceptionHandler(DuplicateCustomerException.class)
-    public ResponseEntity<ApiResponse<Void>> handleDuplicate(DuplicateCustomerException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiResponse.fail("DUPLICATE_CUSTOMER", ex.getMessage()));
+    @ExceptionHandler(CustomerAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handleCustomerAlreadyExists(
+            CustomerAlreadyExistsException ex, HttpServletRequest request) {
+        log.warn("CustomerAlreadyExistsException: {}", ex.getMessage());
+        return buildError(HttpStatus.CONFLICT, ex.getMessage(), request.getRequestURI());
     }
 
     @ExceptionHandler(InvalidKycTransitionException.class)
-    public ResponseEntity<ApiResponse<Void>> handleKycTransition(InvalidKycTransitionException ex) {
-        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
-                .body(ApiResponse.fail("INVALID_KYC_TRANSITION", ex.getMessage()));
+    public ResponseEntity<ErrorResponse> handleInvalidKycTransition(
+            InvalidKycTransitionException ex, HttpServletRequest request) {
+        log.warn("InvalidKycTransitionException: {}", ex.getMessage());
+        return buildError(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), request.getRequestURI());
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiResponse.fail("ILLEGAL_STATE", ex.getMessage()));
-    }
-
-    // ── Validation ────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Validation
+    // -----------------------------------------------------------------------
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
-        Map<String, String> fieldErrors = ex.getBindingResult()
-                .getFieldErrors()
-                .stream()
-                .collect(Collectors.toMap(
-                        FieldError::getField,
-                        fe -> fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "Invalid value",
-                        (first, second) -> first   // keep first error per field
-                ));
-
-        ApiResponse<Void> body = ApiResponse.<Void>builder()
-                .success(false)
-                .error(ApiResponse.ErrorDetail.builder()
-                        .code("VALIDATION_FAILED")
-                        .message("Request validation failed")
-                        .details(fieldErrors)
-                        .build())
+    public ResponseEntity<ErrorResponse> handleValidation(
+            MethodArgumentNotValidException ex, HttpServletRequest request) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        for (FieldError fe : ex.getBindingResult().getFieldErrors()) {
+            fieldErrors.put(fe.getField(), fe.getDefaultMessage());
+        }
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Validation failed");
+        problemDetail.setInstance(URI.create(request.getRequestURI()));
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+                .message("Validation failed")
+                .path(request.getRequestURI())
+                .fieldErrors(fieldErrors)
                 .build();
-
         return ResponseEntity.badRequest().body(body);
     }
 
-    // ── Catch-all ─────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Security
+    // -----------------------------------------------------------------------
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(
+            AccessDeniedException ex, HttpServletRequest request) {
+        return buildError(HttpStatus.FORBIDDEN, "Access denied", request.getRequestURI());
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthentication(
+            AuthenticationException ex, HttpServletRequest request) {
+        return buildError(HttpStatus.UNAUTHORIZED, "Authentication required", request.getRequestURI());
+    }
+
+    // -----------------------------------------------------------------------
+    // Catch-all
+    // -----------------------------------------------------------------------
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
-        log.error("Unhandled exception in CustomerService", ex);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.fail("INTERNAL_ERROR",
-                        "An unexpected error occurred. Please try again later."));
+    public ResponseEntity<ErrorResponse> handleGeneric(
+            Exception ex, HttpServletRequest request) {
+        log.error("Unhandled exception at {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+        return buildError(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred", request.getRequestURI());
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper
+    // -----------------------------------------------------------------------
+
+    private ResponseEntity<ErrorResponse> buildError(HttpStatus status, String message, String path) {
+        ErrorResponse body = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(status.value())
+                .error(status.getReasonPhrase())
+                .message(message)
+                .path(path)
+                .build();
+        return ResponseEntity.status(status).body(body);
     }
 }

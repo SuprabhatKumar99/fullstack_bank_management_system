@@ -1,70 +1,51 @@
 package com.cbs.customer_service.dto.response;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
-import com.cbs.customer_service.enums.CustomerType;
-import com.cbs.customer_service.enums.Gender;
 import com.cbs.customer_service.enums.KycStatus;
-import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonFormat;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
-/**
- * Full customer profile response — returned by GET /api/v1/customers/{id}.
- * Sensitive fields (full Aadhaar, internal flags) are excluded.
- */
 @Data
 @Builder
-@JsonInclude(JsonInclude.Include.NON_NULL)
+@NoArgsConstructor
+@AllArgsConstructor
 public class CustomerResponse {
 
-    private UUID         customerId;
-    private CustomerType customerType;
-
-    // Individual
-    private String     firstName;
-    private String     lastName;
-    private String     displayName;
-    private LocalDate  dateOfBirth;
-    private Gender     gender;
-
-    // Business
-    private String businessName;
-    private String businessType;
-
-    // Identity (masked)
-    private String panNumber;          // always shown (PAN is semi-public)
-    private String aadhaarLastFour;    // XXXX-XXXX-1234 — only last 4 digits
-
-    // Contact
-    private String phone;
+    private UUID id;
+    private String customerNumber;
+    private String firstName;
+    private String lastName;
+    private String fullName;
     private String email;
-    private String alternatePhone;
+    private String phoneNumber;
 
-    // Address
-    private String addressLine1;
-    private String addressLine2;
-    private String city;
-    private String state;
-    private String pincode;
-    private String country;
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate dateOfBirth;
 
-    // KYC
-    private KycStatus      kycStatus;
-    private OffsetDateTime kycVerifiedAt;
-    private OffsetDateTime kycExpiresAt;
+    private String nationalId;
+    private String nationality;
+    private KycStatus kycStatus;
 
-    // Risk
-    private String  riskCategory;
-    private Boolean isPep;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime kycVerifiedAt;
 
-    // Branch
-    private UUID homeBranchId;
+    private String kycRejectionReason;
+    private boolean active;
+    private String riskCategory;
 
-    // Audit
-    private OffsetDateTime createdAt;
-    private OffsetDateTime updatedAt;
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime createdAt;
+
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
+    private LocalDateTime updatedAt;
+
+    private List<AddressResponse> addresses;
 }

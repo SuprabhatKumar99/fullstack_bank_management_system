@@ -4,13 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,298 +23,245 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 
-import com.cbs.customer_service.dto.request.KycStatusUpdateRequest;
-import com.cbs.customer_service.dto.request.RegisterCustomerRequest;
-import com.cbs.customer_service.dto.request.UpdateProfileRequest;
+import com.cbs.customer_service.dto.request.CustomerRegistrationRequest;
+import com.cbs.customer_service.dto.request.KycUpdateRequest;
 import com.cbs.customer_service.dto.response.CustomerResponse;
 import com.cbs.customer_service.entity.Customer;
-import com.cbs.customer_service.enums.CustomerType;
 import com.cbs.customer_service.enums.KycStatus;
+import com.cbs.customer_service.exception.CustomerAlreadyExistsException;
 import com.cbs.customer_service.exception.CustomerNotFoundException;
-import com.cbs.customer_service.exception.DuplicateCustomerException;
 import com.cbs.customer_service.exception.InvalidKycTransitionException;
 import com.cbs.customer_service.mapper.CustomerMapper;
+import com.cbs.customer_service.repository.CustomerAddressRepository;
 import com.cbs.customer_service.repository.CustomerRepository;
+import com.cbs.customer_service.service.impl.CustomerServiceImpl;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("CustomerService")
+@DisplayName("CustomerServiceImpl Unit Tests")
 class CustomerServiceTest {
 
-    @Mock CustomerRepository   customerRepository;
-    @Mock CustomerMapper       customerMapper;
-    @Mock KafkaTemplate<String, Object> kafkaTemplate;
+    @Mock private CustomerRepository        customerRepository;
+    @Mock private CustomerAddressRepository addressRepository;
+    @Mock private CustomerMapper            customerMapper;
+    @Mock private CustomerNumberGenerator   customerNumberGenerator;
+    @Mock private KafkaTemplate<String, Object> kafkaTemplate;
 
-    @InjectMocks CustomerService customerService;
+    @InjectMocks
+    private CustomerServiceImpl customerService;
 
-    // ── Fixtures ──────────────────────────────────────────────────
-
-    private RegisterCustomerRequest validRequest;
-    private Customer                savedCustomer;
-    private CustomerResponse        customerResponse;
-    private final UUID              customerId = UUID.randomUUID();
-    private final UUID              staffId    = UUID.randomUUID();
+    private CustomerRegistrationRequest registrationRequest;
+    private Customer                    sampleCustomer;
+    private CustomerResponse            sampleResponse;
 
     @BeforeEach
     void setUp() {
-        validRequest = new RegisterCustomerRequest();
-        validRequest.setCustomerType(CustomerType.INDIVIDUAL);
-        validRequest.setFirstName("Ravi");
-        validRequest.setLastName("Sharma");
-        validRequest.setPhone("9876543210");
-        validRequest.setEmail("ravi@example.com");
-        validRequest.setPanNumber("ABCDE1234F");
-        validRequest.setDateOfBirth(LocalDate.of(1990, 5, 15));
+        registrationRequest = CustomerRegistrationRequest.builder()
+                .firstName("Supra")
+                .lastName("B")
+                .email("supra@example.com")
+                .phoneNumber("+919876543210")
+                .dateOfBirth(LocalDate.of(1995, 6, 14))
+                .build();
 
-        savedCustomer = Customer.builder()
-            .customerId(customerId)
-            .customerType(CustomerType.INDIVIDUAL)
-            .firstName("Ravi")
-            .lastName("Sharma")
-            .phone("9876543210")
-            .email("ravi@example.com")
-            .panNumber("ABCDE1234F")
-            .kycStatus(KycStatus.PENDING)
-            .build();
+        sampleCustomer = Customer.builder()
+                .id(UUID.randomUUID())
+                .customerNumber("CBS-202406-00000001")
+                .firstName("Supra")
+                .lastName("B")
+                .email("supra@example.com")
+                .phoneNumber("+919876543210")
+                .dateOfBirth(LocalDate.of(1995, 6, 14))
+                .kycStatus(KycStatus.PENDING)
+                .active(true)
+                .addresses(new HashSet<>())
+                .build();
 
-        customerResponse = CustomerResponse.builder()
-            .customerId(customerId)
-            .customerType(CustomerType.INDIVIDUAL)
-            .firstName("Ravi")
-            .lastName("Sharma")
-            .kycStatus(KycStatus.PENDING)
-            .build();
+        sampleResponse = CustomerResponse.builder()
+                .id(sampleCustomer.getId())
+                .customerNumber("CBS-202406-00000001")
+                .firstName("Supra")
+                .lastName("B")
+                .email("supra@example.com")
+                .kycStatus(KycStatus.PENDING)
+                .active(true)
+                .build();
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Registration Tests
+    // -----------------------------------------------------------------------
+
     @Nested
     @DisplayName("registerCustomer()")
     class RegisterCustomerTests {
 
         @Test
-        @DisplayName("should register a valid INDIVIDUAL customer and publish event")
-        void shouldRegisterValidCustomer() {
-            given(customerRepository.existsByPhone(anyString())).willReturn(false);
+        @DisplayName("should register customer successfully when all fields are unique")
+        void shouldRegisterCustomerSuccessfully() {
             given(customerRepository.existsByEmail(anyString())).willReturn(false);
-            given(customerRepository.existsByPanNumber(anyString())).willReturn(false);
-            given(customerMapper.toEntity(any())).willReturn(savedCustomer);
-            given(customerRepository.save(any())).willReturn(savedCustomer);
-            given(customerMapper.toResponse(any())).willReturn(customerResponse);
+            given(customerRepository.existsByPhoneNumber(anyString())).willReturn(false);
+            given(customerMapper.toEntity(any())).willReturn(sampleCustomer);
+            given(customerNumberGenerator.generate()).willReturn("CBS-202406-00000001");
+            given(customerRepository.save(any(Customer.class))).willReturn(sampleCustomer);
+            given(customerMapper.toResponse(any(Customer.class))).willReturn(sampleResponse);
 
-            CustomerResponse result = customerService.registerCustomer(validRequest, staffId);
+            CustomerResponse result = customerService.registerCustomer(registrationRequest);
 
             assertThat(result).isNotNull();
-            assertThat(result.getCustomerId()).isEqualTo(customerId);
+            assertThat(result.getEmail()).isEqualTo("supra@example.com");
+            assertThat(result.getKycStatus()).isEqualTo(KycStatus.PENDING);
+
             then(customerRepository).should().save(any(Customer.class));
-            then(kafkaTemplate).should().send(anyString(), anyString(), any());
         }
 
         @Test
-        @DisplayName("should throw DuplicateCustomerException when phone already exists")
-        void shouldThrowOnDuplicatePhone() {
-            given(customerRepository.existsByPhone("9876543210")).willReturn(true);
+        @DisplayName("should throw CustomerAlreadyExistsException when email is taken")
+        void shouldThrowWhenEmailAlreadyExists() {
+            given(customerRepository.existsByEmail("supra@example.com")).willReturn(true);
 
-            assertThatThrownBy(() ->
-                customerService.registerCustomer(validRequest, staffId))
-                .isInstanceOf(DuplicateCustomerException.class)
-                .hasMessageContaining("9876543210");
+            assertThatThrownBy(() -> customerService.registerCustomer(registrationRequest))
+                    .isInstanceOf(CustomerAlreadyExistsException.class)
+                    .hasMessageContaining("supra@example.com");
 
             then(customerRepository).should(never()).save(any());
-            then(kafkaTemplate).should(never()).send(anyString(), anyString(), any());
         }
 
         @Test
-        @DisplayName("should throw DuplicateCustomerException when PAN already exists")
-        void shouldThrowOnDuplicatePan() {
-            given(customerRepository.existsByPhone(anyString())).willReturn(false);
+        @DisplayName("should throw CustomerAlreadyExistsException when phone number is taken")
+        void shouldThrowWhenPhoneAlreadyExists() {
             given(customerRepository.existsByEmail(anyString())).willReturn(false);
-            given(customerRepository.existsByPanNumber("ABCDE1234F")).willReturn(true);
+            given(customerRepository.existsByPhoneNumber(anyString())).willReturn(true);
 
-            assertThatThrownBy(() ->
-                customerService.registerCustomer(validRequest, staffId))
-                .isInstanceOf(DuplicateCustomerException.class)
-                .hasMessageContaining("ABCDE1234F");
-        }
-
-        @Test
-        @DisplayName("should throw IllegalArgumentException when INDIVIDUAL has no first name")
-        void shouldThrowWhenIndividualHasNoFirstName() {
-            validRequest.setFirstName(null);
-
-            assertThatThrownBy(() ->
-                customerService.registerCustomer(validRequest, staffId))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("First name is required");
-        }
-
-        @Test
-        @DisplayName("should throw IllegalArgumentException when customer is under 18")
-        void shouldThrowWhenUnder18() {
-            validRequest.setDateOfBirth(LocalDate.now().minusYears(16));
-
-            assertThatThrownBy(() ->
-                customerService.registerCustomer(validRequest, staffId))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("18 years");
-        }
-
-        @Test
-        @DisplayName("should throw when BUSINESS customer has no business name")
-        void shouldThrowWhenBusinessHasNoName() {
-            validRequest.setCustomerType(CustomerType.BUSINESS);
-            validRequest.setBusinessName(null);
-
-            assertThatThrownBy(() ->
-                customerService.registerCustomer(validRequest, staffId))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Business name is required");
+            assertThatThrownBy(() -> customerService.registerCustomer(registrationRequest))
+                    .isInstanceOf(CustomerAlreadyExistsException.class)
+                    .hasMessageContaining("+919876543210");
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Read Tests
+    // -----------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("getCustomerById()")
+    class GetCustomerByIdTests {
+
+        @Test
+        @DisplayName("should return CustomerResponse for a known id")
+        void shouldReturnCustomerWhenFound() {
+            UUID id = sampleCustomer.getId();
+            given(customerRepository.findById(id)).willReturn(Optional.of(sampleCustomer));
+            given(customerMapper.toResponse(sampleCustomer)).willReturn(sampleResponse);
+
+            CustomerResponse result = customerService.getCustomerById(id);
+
+            assertThat(result).isNotNull();
+            assertThat(result.getId()).isEqualTo(id);
+        }
+
+        @Test
+        @DisplayName("should throw CustomerNotFoundException for an unknown id")
+        void shouldThrowWhenNotFound() {
+            UUID unknownId = UUID.randomUUID();
+            given(customerRepository.findById(unknownId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> customerService.getCustomerById(unknownId))
+                    .isInstanceOf(CustomerNotFoundException.class)
+                    .hasMessageContaining(unknownId.toString());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // KYC State Machine Tests
+    // -----------------------------------------------------------------------
+
     @Nested
     @DisplayName("updateKycStatus()")
-    class KycStatusTests {
+    class KycUpdateTests {
 
         @Test
-        @DisplayName("PENDING → UNDER_REVIEW should succeed")
-        void pendingToUnderReview() {
-            savedCustomer.setKycStatus(KycStatus.PENDING);
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
-            given(customerRepository.save(any())).willReturn(savedCustomer);
-            given(customerMapper.toResponse(any())).willReturn(customerResponse);
+        @DisplayName("should allow valid KYC transition PENDING → UNDER_REVIEW")
+        void shouldAllowValidKycTransition() {
+            UUID id = sampleCustomer.getId();
+            KycUpdateRequest request = KycUpdateRequest.builder()
+                    .newStatus(KycStatus.UNDER_REVIEW)
+                    .build();
 
-            KycStatusUpdateRequest req = new KycStatusUpdateRequest();
-            req.setStatus(KycStatus.UNDER_REVIEW);
+            given(customerRepository.findById(id)).willReturn(Optional.of(sampleCustomer));
+            given(customerRepository.save(any(Customer.class))).willReturn(sampleCustomer);
+            given(customerMapper.toResponse(any())).willReturn(sampleResponse);
 
-            customerService.updateKycStatus(customerId, req, "officer-001");
+            CustomerResponse result = customerService.updateKycStatus(id, request);
 
-            assertThat(savedCustomer.getKycStatus()).isEqualTo(KycStatus.UNDER_REVIEW);
-            then(kafkaTemplate).should().send(anyString(), anyString(), any());
+            assertThat(result).isNotNull();
+            then(customerRepository).should().save(sampleCustomer);
         }
 
         @Test
-        @DisplayName("UNDER_REVIEW → VERIFIED should set kycVerifiedAt and expiresAt")
-        void underReviewToVerified() {
-            savedCustomer.setKycStatus(KycStatus.UNDER_REVIEW);
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
-            given(customerRepository.save(any())).willReturn(savedCustomer);
-            given(customerMapper.toResponse(any())).willReturn(customerResponse);
+        @DisplayName("should throw InvalidKycTransitionException for illegal transition PENDING → APPROVED")
+        void shouldThrowForIllegalKycTransition() {
+            UUID id = sampleCustomer.getId();
+            KycUpdateRequest request = KycUpdateRequest.builder()
+                    .newStatus(KycStatus.APPROVED)
+                    .build();
 
-            KycStatusUpdateRequest req = new KycStatusUpdateRequest();
-            req.setStatus(KycStatus.VERIFIED);
-            req.setExpiresAt(OffsetDateTime.now().plusYears(2));
+            // PENDING → APPROVED is not a valid transition
+            given(customerRepository.findById(id)).willReturn(Optional.of(sampleCustomer));
 
-            customerService.updateKycStatus(customerId, req, "officer-001");
-
-            assertThat(savedCustomer.getKycStatus()).isEqualTo(KycStatus.VERIFIED);
-            assertThat(savedCustomer.getKycVerifiedAt()).isNotNull();
-            assertThat(savedCustomer.getKycExpiresAt()).isNotNull();
+            assertThatThrownBy(() -> customerService.updateKycStatus(id, request))
+                    .isInstanceOf(InvalidKycTransitionException.class);
         }
 
         @Test
-        @DisplayName("PENDING → VERIFIED should throw InvalidKycTransitionException")
-        void pendingToVerifiedShouldFail() {
-            savedCustomer.setKycStatus(KycStatus.PENDING);
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
+        @DisplayName("should set kycVerifiedAt when transitioning to APPROVED")
+        void shouldSetVerifiedAtOnApproval() {
+            // Set up customer in UNDER_REVIEW state
+            sampleCustomer.setKycStatus(KycStatus.UNDER_REVIEW);
+            UUID id = sampleCustomer.getId();
 
-            KycStatusUpdateRequest req = new KycStatusUpdateRequest();
-            req.setStatus(KycStatus.VERIFIED);
+            KycUpdateRequest request = KycUpdateRequest.builder()
+                    .newStatus(KycStatus.APPROVED)
+                    .build();
 
-            assertThatThrownBy(() ->
-                customerService.updateKycStatus(customerId, req, "officer-001"))
-                .isInstanceOf(InvalidKycTransitionException.class)
-                .hasMessageContaining("PENDING")
-                .hasMessageContaining("VERIFIED");
-        }
+            given(customerRepository.findById(id)).willReturn(Optional.of(sampleCustomer));
+            given(customerRepository.save(any(Customer.class))).willReturn(sampleCustomer);
+            given(customerMapper.toResponse(any())).willReturn(sampleResponse);
 
-        @Test
-        @DisplayName("VERIFIED → REJECTED should throw InvalidKycTransitionException")
-        void verifiedToRejectedShouldFail() {
-            savedCustomer.setKycStatus(KycStatus.VERIFIED);
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
+            customerService.updateKycStatus(id, request);
 
-            KycStatusUpdateRequest req = new KycStatusUpdateRequest();
-            req.setStatus(KycStatus.REJECTED);
-
-            assertThatThrownBy(() ->
-                customerService.updateKycStatus(customerId, req, "officer-001"))
-                .isInstanceOf(InvalidKycTransitionException.class);
+            assertThat(sampleCustomer.getKycVerifiedAt()).isNotNull();
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Deactivation Tests
+    // -----------------------------------------------------------------------
+
     @Nested
-    @DisplayName("getById()")
-    class GetByIdTests {
+    @DisplayName("deactivateCustomer()")
+    class DeactivationTests {
 
         @Test
-        @DisplayName("should return customer when found")
-        void shouldReturnCustomer() {
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
-            given(customerMapper.toResponse(savedCustomer))
-                .willReturn(customerResponse);
+        @DisplayName("should deactivate an active customer")
+        void shouldDeactivateCustomer() {
+            UUID id = sampleCustomer.getId();
+            given(customerRepository.findById(id)).willReturn(Optional.of(sampleCustomer));
+            given(customerRepository.save(any(Customer.class))).willReturn(sampleCustomer);
 
-            CustomerResponse result = customerService.getById(customerId);
+            customerService.deactivateCustomer(id);
 
-            assertThat(result.getCustomerId()).isEqualTo(customerId);
+            assertThat(sampleCustomer.isActive()).isFalse();
+            then(customerRepository).should().save(sampleCustomer);
         }
 
         @Test
-        @DisplayName("should throw CustomerNotFoundException when not found")
-        void shouldThrowWhenNotFound() {
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.empty());
+        @DisplayName("should throw CustomerNotFoundException when deactivating unknown customer")
+        void shouldThrowWhenDeactivatingUnknownCustomer() {
+            UUID unknownId = UUID.randomUUID();
+            given(customerRepository.findById(unknownId)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> customerService.getById(customerId))
-                .isInstanceOf(CustomerNotFoundException.class)
-                .hasMessageContaining(customerId.toString());
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    @Nested
-    @DisplayName("updateProfile()")
-    class UpdateProfileTests {
-
-        @Test
-        @DisplayName("should update mutable fields and publish event")
-        void shouldUpdateProfile() {
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
-            given(customerRepository.existsByEmail(anyString())).willReturn(false);
-            given(customerRepository.save(any())).willReturn(savedCustomer);
-            given(customerMapper.toResponse(any())).willReturn(customerResponse);
-
-            UpdateProfileRequest req = new UpdateProfileRequest();
-            req.setEmail("new.email@example.com");
-            req.setCity("Pune");
-
-            customerService.updateProfile(customerId, req);
-
-            then(customerMapper).should().updateEntityFromRequest(eq(req), eq(savedCustomer));
-            then(customerRepository).should().save(savedCustomer);
-            then(kafkaTemplate).should().send(anyString(), anyString(), any());
-        }
-
-        @Test
-        @DisplayName("should throw DuplicateCustomerException when new email already taken")
-        void shouldThrowOnDuplicateEmail() {
-            savedCustomer.setEmail("old@example.com");
-            given(customerRepository.findById(customerId))
-                .willReturn(Optional.of(savedCustomer));
-            given(customerRepository.existsByEmail("taken@example.com")).willReturn(true);
-
-            UpdateProfileRequest req = new UpdateProfileRequest();
-            req.setEmail("taken@example.com");
-
-            assertThatThrownBy(() -> customerService.updateProfile(customerId, req))
-                .isInstanceOf(DuplicateCustomerException.class)
-                .hasMessageContaining("taken@example.com");
+            assertThatThrownBy(() -> customerService.deactivateCustomer(unknownId))
+                    .isInstanceOf(CustomerNotFoundException.class);
         }
     }
 }

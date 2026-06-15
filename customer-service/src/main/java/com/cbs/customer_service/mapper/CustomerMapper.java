@@ -1,85 +1,75 @@
 package com.cbs.customer_service.mapper;
 
+import java.util.List;
+
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
 import org.mapstruct.ReportingPolicy;
 
-import com.cbs.customer_service.dto.request.RegisterCustomerRequest;
-import com.cbs.customer_service.dto.request.UpdateProfileRequest;
+import com.cbs.customer_service.dto.request.AddressRequest;
+import com.cbs.customer_service.dto.request.CustomerProfileUpdateRequest;
+import com.cbs.customer_service.dto.request.CustomerRegistrationRequest;
+import com.cbs.customer_service.dto.response.AddressResponse;
 import com.cbs.customer_service.dto.response.CustomerResponse;
-import com.cbs.customer_service.dto.response.CustomerSummaryResponse;
 import com.cbs.customer_service.entity.Customer;
+import com.cbs.customer_service.entity.CustomerAddress;
 
-/**
- * MapStruct mapper for Customer entity ↔ DTOs.
- *
- * componentModel = "spring" → generates a Spring @Component bean,
- * injected normally with @Autowired / constructor injection.
- *
- * nullValuePropertyMappingStrategy = IGNORE → for PATCH updates,
- * null fields in the request are skipped (not overwritten in the entity).
- */
 @Mapper(
-    componentModel        = "spring",
-    nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE,
-    unmappedTargetPolicy  = ReportingPolicy.IGNORE
+        componentModel = "spring",
+        nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE,
+        unmappedTargetPolicy = ReportingPolicy.WARN
 )
 public interface CustomerMapper {
 
-    // ── Register → Entity ─────────────────────────────────────────
+    @Mapping(target = "id",                ignore = true)
+    @Mapping(target = "customerNumber",    ignore = true)
+    @Mapping(target = "kycStatus",         ignore = true)
+    @Mapping(target = "kycVerifiedAt",     ignore = true)
+    @Mapping(target = "kycRejectionReason",ignore = true)
+    @Mapping(target = "active",            ignore = true)
+    @Mapping(target = "riskCategory",      ignore = true)
+    @Mapping(target = "createdAt",         ignore = true)
+    @Mapping(target = "updatedAt",         ignore = true)
+    @Mapping(target = "version",           ignore = true)
+    @Mapping(target = "addresses",         ignore = true)
+    Customer toEntity(CustomerRegistrationRequest request);
 
-    @Mapping(target = "customerId",   ignore = true)
-    @Mapping(target = "kycStatus",    ignore = true)  // defaults to PENDING in entity
-    @Mapping(target = "createdAt",    ignore = true)
-    @Mapping(target = "updatedAt",    ignore = true)
-    @Mapping(target = "kycVerifiedAt",ignore = true)
-    @Mapping(target = "kycExpiresAt", ignore = true)
-    @Mapping(target = "isPep",        ignore = true)
-    @Mapping(target = "isDeceased",   ignore = true)
-    @Mapping(target = "riskCategory", ignore = true)
-    @Mapping(target = "createdBy",    ignore = true)
-    @Mapping(target = "aadhaarMasked",ignore = true)
-    Customer toEntity(RegisterCustomerRequest request);
-
-    // ── Entity → Full Response ────────────────────────────────────
-
-    @Mapping(target = "displayName",    expression = "java(customer.getDisplayName())")
-    @Mapping(target = "aadhaarLastFour",expression = "java(maskAadhaar(customer.getAadhaarMasked()))")
+    @Mapping(target = "fullName", expression = "java(customer.getFullName())")
     CustomerResponse toResponse(Customer customer);
 
-    // ── Entity → Summary ─────────────────────────────────────────
+    List<CustomerResponse> toResponseList(List<Customer> customers);
 
-    @Mapping(target = "displayName", expression = "java(customer.getDisplayName())")
-    CustomerSummaryResponse toSummary(Customer customer);
+    @Mapping(target = "id",         ignore = true)
+    @Mapping(target = "customer",   ignore = true)
+    @Mapping(target = "createdAt",  ignore = true)
+    @Mapping(target = "updatedAt",  ignore = true)
+    CustomerAddress toAddressEntity(AddressRequest request);
 
-    // ── PATCH update (null fields are ignored) ────────────────────
+    AddressResponse toAddressResponse(CustomerAddress address);
 
-    @Mapping(target = "customerId",    ignore = true)
-    @Mapping(target = "customerType",  ignore = true)  // immutable after registration
-    @Mapping(target = "phone",         ignore = true)  // immutable — change via OTP flow
-    @Mapping(target = "panNumber",     ignore = true)  // immutable — KYC document
-    @Mapping(target = "kycStatus",     ignore = true)
-    @Mapping(target = "kycVerifiedAt", ignore = true)
-    @Mapping(target = "kycExpiresAt",  ignore = true)
-    @Mapping(target = "createdAt",     ignore = true)
-    @Mapping(target = "updatedAt",     ignore = true)
-    @Mapping(target = "isPep",         ignore = true)
-    @Mapping(target = "isDeceased",    ignore = true)
-    @Mapping(target = "riskCategory",  ignore = true)
-    @Mapping(target = "createdBy",     ignore = true)
-    @Mapping(target = "aadhaarMasked", ignore = true)
-    @Mapping(target = "dateOfBirth",   ignore = true)
-    @Mapping(target = "gender",        ignore = true)
-    @Mapping(target = "homeBranchId",  ignore = true)
-    @Mapping(target = "alternatePhone",ignore = true)
-    void updateEntityFromRequest(UpdateProfileRequest request, @MappingTarget Customer customer);
+    List<AddressResponse> toAddressResponseList(List<CustomerAddress> addresses);
 
-    // ── Helper: mask Aadhaar ──────────────────────────────────────
-
-    default String maskAadhaar(String raw) {
-        if (raw == null || raw.length() < 4) return null;
-        return "XXXX-XXXX-" + raw.substring(raw.length() - 4);
-    }
+    /**
+     * Partial update — only non-null fields from the source are applied.
+     * NullValuePropertyMappingStrategy.IGNORE handles this automatically.
+     */
+    @Mapping(target = "id",                ignore = true)
+    @Mapping(target = "customerNumber",    ignore = true)
+    @Mapping(target = "dateOfBirth",       ignore = true)
+    @Mapping(target = "nationalId",        ignore = true)
+    @Mapping(target = "kycStatus",         ignore = true)
+    @Mapping(target = "kycVerifiedAt",     ignore = true)
+    @Mapping(target = "kycRejectionReason",ignore = true)
+    @Mapping(target = "active",            ignore = true)
+    @Mapping(target = "riskCategory",      ignore = true)
+    @Mapping(target = "createdAt",         ignore = true)
+    @Mapping(target = "updatedAt",         ignore = true)
+    @Mapping(target = "version",           ignore = true)
+    @Mapping(target = "addresses",         ignore = true)
+    void updateCustomerFromRequest(
+            CustomerProfileUpdateRequest request,
+            @MappingTarget Customer customer
+    );
 }
